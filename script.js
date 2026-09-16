@@ -9,8 +9,8 @@
    - La publishable/anon key puede estar en frontend si tus políticas RLS están bien definidas.
    - Si dejas políticas públicas de edición, cualquier persona con el link podría modificar el historial.
 */
-const SUPABASE_URL = "https://zrnplnanihhfogerrtyx.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_xiNKNP6LpJkfbcoa9IG33w_yMbWRrNF";
+const SUPABASE_URL = "https://htdguizapwdfgacejaho.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_NoqKvL4UJpCTeByHfBBLkg_TnQrYGBI";
 const SUPABASE_TABLE = "historial_carga_opit";
 const SUPABASE_LISTA_TABLE = "voladuras_autorizadas_opit";
 const SUPABASE_LISTA_ID = "lista_principal";
