@@ -150,6 +150,11 @@ let factoresConsumoCargadosDesdeSupabase = false;
 const PORCENTAJE_ACEITE_RESIDUAL_DEFAULT = 0;
 const AUTO_REFRESH_MS = 60 * 1000;
 
+// Cache en memoria del historial por voladura, para no repetir un SELECT * completo
+// contra Supabase en cada ciclo de seguimiento automático (ver aplicarHistorialCargaSupabase).
+const historialCachePorBlast = new Map();
+const CICLOS_ENTRE_RESYNC_HISTORIAL = 5;
+
 const user = "willian.varas@enaex.com";
 const HISTORIAL_CARGA_KEY = "historialCargaTaladrosOPit";
 const SEGUIMIENTO_PROYECTOS_KEY = "seguimientoProyectosOPit";
@@ -551,6 +556,7 @@ async function cerrarSesionDashboard() {
   filtrosTablaDetalle = {};
   ordenTablaDetalle = { campo: null, direccion: "asc" };
   dataTablaDetalleBase = [];
+  historialCachePorBlast.clear();
   limpiarTabla();
   limpiarKpis();
   limpiarGrafico();
@@ -960,9 +966,9 @@ async function cargarDatos(opciones = {}) {
     dataActual = transformarDatosApiOPit(data);
 
     if (usandoSupabase) {
-      dataActual = await aplicarHistorialCargaSupabase(dataActual, blastId);
+      dataActual = await aplicarHistorialCargaSupabase(dataActual, blastId, { forzarResyncCompleto: true });
       if (historialAdminVisible()) {
-        await cargarHistorialAdmin();
+        renderHistorialAdmin(historialActualSupabase);
       }
     } else {
       dataActual = aplicarHistorialCargaLocal(dataActual, blastId);
@@ -1027,6 +1033,11 @@ function iniciarAutoRefreshDatos() {
 }
 
 async function ejecutarAutoRefreshDatos() {
+  if (document.hidden) {
+    actualizarEstadoAutoRefresh("Seguimiento global: en pausa (pestaña no visible)");
+    return;
+  }
+
   if (appDashboard?.classList.contains("oculto")) {
     detenerAutoRefreshDatos("Seguimiento global: inactivo");
     return;
@@ -1034,6 +1045,12 @@ async function ejecutarAutoRefreshDatos() {
 
   await actualizarProyectosSeleccionadosSeguimiento();
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && timerAutoRefresh) {
+    ejecutarAutoRefreshDatos();
+  }
+});
 
 async function actualizarProyectosSeleccionadosSeguimiento() {
   if (actualizandoSeguimientoGlobal) {
@@ -1068,7 +1085,7 @@ async function actualizarProyectosSeleccionadosSeguimiento() {
         nombresActualizados.push(proyecto.nombre || proyecto.blastId);
 
         if (historialAdminVisible()) {
-          await cargarHistorialAdmin();
+          renderHistorialAdmin(historialActualSupabase);
         }
 
         actualizarDashboardAnalitico();
@@ -2531,9 +2548,15 @@ function actualizarRegistroSupabaseDesdeFila(registro, fila, ahoraISO, ahoraText
   return salida;
 }
 
-async function aplicarHistorialCargaSupabase(data, blastId) {
-  const historial = await obtenerHistorialSupabase(blastId);
-  const historialPorClave = new Map(historial.map(registro => [registro.clave, registro]));
+async function aplicarHistorialCargaSupabase(data, blastId, opciones = {}) {
+  const forzarResyncCompleto = !!opciones.forzarResyncCompleto;
+  const claveBlast = String(blastId);
+  const cacheEntry = historialCachePorBlast.get(claveBlast);
+  const necesitaResyncCompleto = forzarResyncCompleto || !cacheEntry || cacheEntry.ciclosSinResync >= CICLOS_ENTRE_RESYNC_HISTORIAL;
+
+  const historialPorClave = necesitaResyncCompleto
+    ? new Map((await obtenerHistorialSupabase(blastId)).map(registro => [registro.clave, registro]))
+    : cacheEntry.porClave;
 
   const ahora = new Date();
   const ahoraISO = ahora.toISOString();
@@ -2557,6 +2580,11 @@ async function aplicarHistorialCargaSupabase(data, blastId) {
   await upsertHistorialSupabase(Array.from(registrosPorClaveParaGuardar.values()));
 
   historialActualSupabase = Array.from(registrosFinalesPorClave.values());
+
+  historialCachePorBlast.set(claveBlast, {
+    porClave: registrosFinalesPorClave,
+    ciclosSinResync: necesitaResyncCompleto ? 0 : cacheEntry.ciclosSinResync + 1
+  });
 
   return data.map(fila => {
     const clave = crearClaveTaladro(fila, blastId);
